@@ -1,0 +1,18 @@
+schema {
+    query: Query
+    subscription: Subscription
+}
+
+type Person {
+    id: Int
+    enrichedString: String
+}
+
+type Query {
+    list: [Person]
+}
+
+type Subscription {
+    flux : Person
+    fluxWindowed : [Person]
+}
