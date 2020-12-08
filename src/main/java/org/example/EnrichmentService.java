@@ -25,7 +25,7 @@ public class EnrichmentService {
      */
     public CompletableFuture<List<String>> getEnrichmentValuesInBulk(List<Integer> ids) {
         this.numberOfTimesCalled++;
-
+        System.out.printf("bulk %s%n", ids);
         return CompletableFuture.supplyAsync(() ->
                 ids
                         .stream()

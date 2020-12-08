@@ -13,7 +13,8 @@ public class CaseTest {
         var enrichmentService = new EnrichmentService();
         Cases.queryingForList(enrichmentService);
 
-        assertEquals(1, enrichmentService.getNumberOfTimesCalled());
+        // source is 100 persons with batching of 10
+        assertEquals(10, enrichmentService.getNumberOfTimesCalled());
     }
 
     @Test
