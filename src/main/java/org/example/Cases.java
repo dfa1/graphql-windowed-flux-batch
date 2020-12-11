@@ -4,7 +4,9 @@ import graphql.ExecutionInput;
 import graphql.ExecutionResult;
 import graphql.GraphQL;
 import graphql.execution.SubscriptionExecutionStrategy;
+import graphql.execution.ValueUnboxer;
 import graphql.schema.DataFetcher;
+import graphql.schema.PropertyDataFetcher;
 import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
 import org.dataloader.BatchLoaderEnvironment;
@@ -37,13 +39,14 @@ public class Cases {
 			new SchemaParser()
 				.parse(Cases.class.getResourceAsStream("/schema.graphqls"));
 
-		DataFetcher<Iterator<CompletableFuture<Person>>> listDataFetcher =
+		DataFetcher<CompletableFuture<List<Person>>> listDataFetcher =
 			dataFetchingEnvironment -> {
 				// replacing Source.getPersonList();
 				// avoiding allocating a big list upfront...
 				Stream<Person> input = IntStream.range(1, 100).boxed().map(Person::new);
 				DataLoader<Integer, Person> dataLoader = dataFetchingEnvironment.getDataLoaderRegistry().getDataLoader(ENRICHMENT_DATA_LOADER);
-				return input.map(person -> dataLoader.load(person.getId(), person)).iterator();
+				input.forEach(person -> dataLoader.load(person.getId(), person));
+				return dataLoader.dispatch();
 			};
 
 		DataFetcher<Publisher<Person>> fluxDataPublisher =
@@ -71,6 +74,15 @@ public class Cases {
 		var graphQlSchema = new SchemaGenerator().makeExecutableSchema(typeDefinitionRegistry, runtimeWiring);
 		return GraphQL
 			.newGraphQL(graphQlSchema)
+			.valueUnboxer(new ValueUnboxer() {
+				@Override
+				public Object unbox(Object object) {
+					if (object instanceof CompletableFuture) {
+						return ((CompletableFuture<Object>)object).join();
+					}
+					return object;
+				}
+			})
 			.subscriptionExecutionStrategy(new SubscriptionExecutionStrategy())
 			.build();
 	}
