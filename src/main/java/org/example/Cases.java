@@ -23,12 +23,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 import static graphql.schema.idl.RuntimeWiring.newRuntimeWiring;
 
-@SuppressWarnings({"UnstableApiUsage"})
 public class Cases {
+
 	public static final String ENRICHMENT_DATA_LOADER = "enrichmentDataLoader";
 	private static final DataLoaderRegistry dataLoaderRegistry = new DataLoaderRegistry();
 
@@ -37,12 +36,12 @@ public class Cases {
 			new SchemaParser()
 				.parse(Cases.class.getResourceAsStream("/schema.graphqls"));
 
-		DataFetcher<CompletableFuture<List<Person>>> listDataFetcher =
+		DataFetcher<List<Person>> listDataFetcher =
 			dataFetchingEnvironment -> {
 				// replacing Source.getPersonList();
 				List<Person> input = IntStream.range(1, 100).boxed().map(Person::new).collect(Collectors.toList());
 				DataLoader<Integer, Person> dataLoader = dataFetchingEnvironment.getDataLoaderRegistry().getDataLoader(ENRICHMENT_DATA_LOADER);
-				return CompletableFuture.completedFuture(input.stream().map(p -> dataLoader.load(p.getId(), p)).map(CompletableFuture::join).collect(Collectors.toList()));
+				return input.stream().map(p -> dataLoader.load(p.getId(), p)).map(CompletableFuture::join).collect(Collectors.toList());
 			};
 
 		DataFetcher<Publisher<Person>> fluxDataPublisher =
