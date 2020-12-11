@@ -2,20 +2,21 @@ package org.example;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
  * Fake enrichment service
  */
 public class EnrichmentService {
-    private int numberOfTimesCalled;
+    private final AtomicInteger numberOfTimesCalled = new AtomicInteger(0);
 
     /**
      * To be used for assertions, gets the number of times the {@link #getEnrichmentValuesInBulk(List)} method was called
      * @return Number of calls to the enrichment method
      */
     public int getNumberOfTimesCalled() {
-        return numberOfTimesCalled;
+        return numberOfTimesCalled.get();
     }
 
     /**
@@ -24,7 +25,7 @@ public class EnrichmentService {
      * @return a list of enrichment results
      */
     public CompletableFuture<List<String>> getEnrichmentValuesInBulk(List<Integer> ids) {
-        this.numberOfTimesCalled++;
+        numberOfTimesCalled.incrementAndGet();
         System.out.printf("bulk %s%n", ids);
         return CompletableFuture.supplyAsync(() ->
                 ids

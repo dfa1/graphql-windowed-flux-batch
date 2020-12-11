@@ -17,6 +17,7 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -36,12 +37,15 @@ public class Cases {
 			new SchemaParser()
 				.parse(Cases.class.getResourceAsStream("/schema.graphqls"));
 
-		DataFetcher<List<Person>> listDataFetcher =
+		DataFetcher<CompletableFuture<List<Person>>> listDataFetcher =
 			dataFetchingEnvironment -> {
 				// replacing Source.getPersonList();
 				List<Person> input = IntStream.range(1, 100).boxed().map(Person::new).collect(Collectors.toList());
+				List<Object> context = Arrays.asList(input.stream().toArray());
 				DataLoader<Integer, Person> dataLoader = dataFetchingEnvironment.getDataLoaderRegistry().getDataLoader(ENRICHMENT_DATA_LOADER);
-				return input.stream().map(p -> dataLoader.load(p.getId(), p)).map(CompletableFuture::join).collect(Collectors.toList());
+				List<Integer> ids = input.stream().map(Person::getId).collect(Collectors.toList());
+				CompletableFuture<List<Person>> listCompletableFuture = dataLoader.loadMany(ids, context);
+				return listCompletableFuture;
 			};
 
 		DataFetcher<Publisher<Person>> fluxDataPublisher =
@@ -53,7 +57,7 @@ public class Cases {
 				Source.getPersonFluxWindowed();
 
 		DataLoaderOptions dataLoaderOptions = DataLoaderOptions.newOptions().setBatchingEnabled(true).setMaxBatchSize(10);
-		DataLoader<Integer, Person> integerPersonDataLoader = DataLoader.newDataLoader(new My(new EnrichmentService()), dataLoaderOptions);
+		DataLoader<Integer, Person> integerPersonDataLoader = DataLoader.newDataLoader(new EnrichmentServiceBatched(enrichmentService), dataLoaderOptions);
 
 		dataLoaderRegistry.register(ENRICHMENT_DATA_LOADER, integerPersonDataLoader);
 
@@ -76,22 +80,22 @@ public class Cases {
 			.newGraphQL(graphQlSchema)
 			.subscriptionExecutionStrategy(new SubscriptionExecutionStrategy())
 			.build();
-
-
 	}
 
-	private static class My implements BatchLoaderWithContext<Integer, Person> {
+	private static class EnrichmentServiceBatched implements BatchLoaderWithContext<Integer, Person> {
 
 		private final EnrichmentService enrichmentService;
 
-		private My(EnrichmentService enrichmentService) {
+		private EnrichmentServiceBatched(EnrichmentService enrichmentService) {
 			this.enrichmentService = enrichmentService;
 		}
 
 		@Override
 		public CompletionStage<List<Person>> load(List<Integer> keys, BatchLoaderEnvironment environment) {
+			System.out.println("starting");
 			CompletableFuture<List<String>> enrichmentValuesInBulk = enrichmentService.getEnrichmentValuesInBulk(keys);
 			return enrichmentValuesInBulk.thenApply(li -> {
+				System.out.println("got response");
 				List<Object> keyContextsList = environment.getKeyContextsList();
 				List<Person> result = new ArrayList<>(li.size());
 				for (int i = 0; i < li.size(); i++) {
