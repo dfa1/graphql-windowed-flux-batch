@@ -1,6 +1,5 @@
 package org.example;
 
-import com.google.common.io.Resources;
 import graphql.ExecutionInput;
 import graphql.ExecutionResult;
 import graphql.GraphQL;
@@ -8,6 +7,8 @@ import graphql.execution.SubscriptionExecutionStrategy;
 import graphql.schema.DataFetcher;
 import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
+import org.dataloader.BatchLoaderEnvironment;
+import org.dataloader.BatchLoaderWithContext;
 import org.dataloader.DataLoader;
 import org.dataloader.DataLoaderOptions;
 import org.dataloader.DataLoaderRegistry;
@@ -15,83 +16,95 @@ import org.example.dto.Person;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static graphql.schema.idl.RuntimeWiring.newRuntimeWiring;
 
-@SuppressWarnings({"Convert2MethodRef", "UnstableApiUsage"})
+@SuppressWarnings({"UnstableApiUsage"})
 public class Cases {
 	public static final String ENRICHMENT_DATA_LOADER = "enrichmentDataLoader";
 	private static final DataLoaderRegistry dataLoaderRegistry = new DataLoaderRegistry();
 
 	private static GraphQL getGraphQl(EnrichmentService enrichmentService) {
-		try {
-			var typeDefinitionRegistry =
-				new SchemaParser()
-					.parse(Resources.toString(Resources.getResource("schema.graphqls"), StandardCharsets.UTF_8));
+		var typeDefinitionRegistry =
+			new SchemaParser()
+				.parse(Cases.class.getResourceAsStream("/schema.graphqls"));
 
-			DataFetcher<CompletableFuture<List<Person>>> listDataFetcher =
-				dataFetchingEnvironment -> {
-					// replacing Source.getPersonList();
-					List<Person> personList = IntStream.range(1, 100).boxed().map(Person::new).collect(Collectors.toList());
-					DataLoader<Integer, String> dataLoader = dataFetchingEnvironment.getDataLoaderRegistry().getDataLoader(ENRICHMENT_DATA_LOADER);
-					List<Integer> collect = personList.stream().map(Person::getId).collect(Collectors.toList());
-					return dataLoader.loadMany(collect).thenApply(result -> {
-						// this is enriching the original input List<Person>
-						for (int i = 0; i < personList.size(); i++) {
-							personList.get(i).setEnrichedString(result.get(i));
-						}
-						return personList;
-					});
-				};
+		DataFetcher<CompletableFuture<List<Person>>> listDataFetcher =
+			dataFetchingEnvironment -> {
+				// replacing Source.getPersonList();
+				List<Person> input = IntStream.range(1, 100).boxed().map(Person::new).collect(Collectors.toList());
+				DataLoader<Integer, Person> dataLoader = dataFetchingEnvironment.getDataLoaderRegistry().getDataLoader(ENRICHMENT_DATA_LOADER);
+				return CompletableFuture.completedFuture(input.stream().map(p -> dataLoader.load(p.getId(), p)).map(CompletableFuture::join).collect(Collectors.toList()));
+			};
+
+		DataFetcher<Publisher<Person>> fluxDataPublisher =
+			dataFetchingEnvironment ->
+				Source.getPersonFlux();
+
+		DataFetcher<Publisher<List<Person>>> windowedFluxDataPublisher =
+			dataFetchingEnvironment ->
+				Source.getPersonFluxWindowed();
+
+		DataLoaderOptions dataLoaderOptions = DataLoaderOptions.newOptions().setBatchingEnabled(true).setMaxBatchSize(10);
+		DataLoader<Integer, Person> integerPersonDataLoader = DataLoader.newDataLoader(new My(new EnrichmentService()), dataLoaderOptions);
+
+		dataLoaderRegistry.register(ENRICHMENT_DATA_LOADER, integerPersonDataLoader);
+
+		var runtimeWiring = newRuntimeWiring()
+			.type("Query", builder ->
+				builder.dataFetcher("list", listDataFetcher))
+			.type("Subscription", builder ->
+				builder.dataFetcher("flux", fluxDataPublisher))
+			.type("Subscription", builder ->
+				builder.dataFetcher("fluxWindowed", windowedFluxDataPublisher))
+			.type("Person", builder ->
+				builder.dataFetcher("enrichedString", dataFetchingEnvironment -> {
+					Person person = dataFetchingEnvironment.getSource();
+					return dataFetchingEnvironment.getDataLoader(ENRICHMENT_DATA_LOADER).load(person.getId());
+				}))
+			.build();
+
+		var graphQlSchema = new SchemaGenerator().makeExecutableSchema(typeDefinitionRegistry, runtimeWiring);
+		return GraphQL
+			.newGraphQL(graphQlSchema)
+			.subscriptionExecutionStrategy(new SubscriptionExecutionStrategy())
+			.build();
 
 
-			DataFetcher<Publisher<Person>> fluxDataPublisher =
-				dataFetchingEnvironment ->
-					Source.getPersonFlux();
-
-			DataFetcher<Publisher<List<Person>>> windowedFluxDataPublisher =
-				dataFetchingEnvironment ->
-					Source.getPersonFluxWindowed();
-
-			DataLoaderOptions dataLoaderOptions = DataLoaderOptions.newOptions().setBatchingEnabled(true).setMaxBatchSize(10);
-			DataLoader<Integer, String> enrichmentStringBatchLoader =
-				DataLoader.newDataLoader(keys ->
-					enrichmentService.getEnrichmentValuesInBulk(keys), dataLoaderOptions);
-
-			dataLoaderRegistry.register(ENRICHMENT_DATA_LOADER, enrichmentStringBatchLoader);
-
-			var runtimeWiring = newRuntimeWiring()
-				.type("Query", builder ->
-					builder.dataFetcher("list", listDataFetcher))
-				.type("Subscription", builder ->
-					builder.dataFetcher("flux", fluxDataPublisher))
-				.type("Subscription", builder ->
-					builder.dataFetcher("fluxWindowed", windowedFluxDataPublisher))
-				.type("Person", builder ->
-					builder.dataFetcher("enrichedString", dataFetchingEnvironment -> {
-						Person person = dataFetchingEnvironment.getSource();
-						return dataFetchingEnvironment.getDataLoader(ENRICHMENT_DATA_LOADER).load(person.getId());
-					}))
-				.build();
-
-			var graphQlSchema = new SchemaGenerator().makeExecutableSchema(typeDefinitionRegistry, runtimeWiring);
-			return GraphQL
-				.newGraphQL(graphQlSchema)
-				.subscriptionExecutionStrategy(new SubscriptionExecutionStrategy())
-				.build();
-
-		} catch (IOException e) {
-			throw new IllegalStateException(e);
-		}
 	}
 
+	private static class My implements BatchLoaderWithContext<Integer, Person> {
+
+		private final EnrichmentService enrichmentService;
+
+		private My(EnrichmentService enrichmentService) {
+			this.enrichmentService = enrichmentService;
+		}
+
+		@Override
+		public CompletionStage<List<Person>> load(List<Integer> keys, BatchLoaderEnvironment environment) {
+			CompletableFuture<List<String>> enrichmentValuesInBulk = enrichmentService.getEnrichmentValuesInBulk(keys);
+			return enrichmentValuesInBulk.thenApply(li -> {
+				List<Object> keyContextsList = environment.getKeyContextsList();
+				List<Person> result = new ArrayList<>(li.size());
+				for (int i = 0; i < li.size(); i++) {
+					Person person = (Person) keyContextsList.get(i);
+					String enrichedString = li.get(i);
+					person.setEnrichedString(enrichedString);
+					result.add(person);
+				}
+				return result;
+			});
+		}
+	}
 
 	public static void queryingForList(EnrichmentService enrichmentService) {
 		var executionResult = getGraphQl(enrichmentService).execute(ExecutionInput.newExecutionInput()
