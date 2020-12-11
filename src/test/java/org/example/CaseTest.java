@@ -1,5 +1,6 @@
 package org.example;
 
+import graphql.ExecutionResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collection;
@@ -11,10 +12,12 @@ public class CaseTest {
     @Test
     public void should_batch_when_queryingForList() {
         var enrichmentService = new EnrichmentService();
-        Cases.queryingForList(enrichmentService);
+        ExecutionResult executionResult = Cases.queryingForList(enrichmentService);
 
         // source is 100 persons with batching of 10
         assertEquals(10, enrichmentService.getNumberOfTimesCalled());
+
+        System.out.println(executionResult.toSpecification());
     }
 
     @Test

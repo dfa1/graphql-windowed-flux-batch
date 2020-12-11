@@ -17,13 +17,13 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static graphql.schema.idl.RuntimeWiring.newRuntimeWiring;
 
@@ -37,15 +37,13 @@ public class Cases {
 			new SchemaParser()
 				.parse(Cases.class.getResourceAsStream("/schema.graphqls"));
 
-		DataFetcher<CompletableFuture<List<Person>>> listDataFetcher =
+		DataFetcher<Iterator<CompletableFuture<Person>>> listDataFetcher =
 			dataFetchingEnvironment -> {
 				// replacing Source.getPersonList();
-				List<Person> input = IntStream.range(1, 100).boxed().map(Person::new).collect(Collectors.toList());
-				List<Object> context = Arrays.asList(input.stream().toArray());
+				// avoiding allocating a big list upfront...
+				Stream<Person> input = IntStream.range(1, 100).boxed().map(Person::new);
 				DataLoader<Integer, Person> dataLoader = dataFetchingEnvironment.getDataLoaderRegistry().getDataLoader(ENRICHMENT_DATA_LOADER);
-				List<Integer> ids = input.stream().map(Person::getId).collect(Collectors.toList());
-				CompletableFuture<List<Person>> listCompletableFuture = dataLoader.loadMany(ids, context);
-				return listCompletableFuture;
+				return input.map(person -> dataLoader.load(person.getId(), person)).iterator();
 			};
 
 		DataFetcher<Publisher<Person>> fluxDataPublisher =
@@ -68,11 +66,6 @@ public class Cases {
 				builder.dataFetcher("flux", fluxDataPublisher))
 			.type("Subscription", builder ->
 				builder.dataFetcher("fluxWindowed", windowedFluxDataPublisher))
-			.type("Person", builder ->
-				builder.dataFetcher("enrichedString", dataFetchingEnvironment -> {
-					Person person = dataFetchingEnvironment.getSource();
-					return dataFetchingEnvironment.getDataLoader(ENRICHMENT_DATA_LOADER).load(person.getId());
-				}))
 			.build();
 
 		var graphQlSchema = new SchemaGenerator().makeExecutableSchema(typeDefinitionRegistry, runtimeWiring);
@@ -92,15 +85,15 @@ public class Cases {
 
 		@Override
 		public CompletionStage<List<Person>> load(List<Integer> keys, BatchLoaderEnvironment environment) {
-			System.out.println("starting");
+			// doing the remote call
 			CompletableFuture<List<String>> enrichmentValuesInBulk = enrichmentService.getEnrichmentValuesInBulk(keys);
-			return enrichmentValuesInBulk.thenApply(li -> {
-				System.out.println("got response");
+			// join the id with the context (person)
+			return enrichmentValuesInBulk.thenApply(enrichmentValues -> {
 				List<Object> keyContextsList = environment.getKeyContextsList();
-				List<Person> result = new ArrayList<>(li.size());
-				for (int i = 0; i < li.size(); i++) {
+				List<Person> result = new ArrayList<>(enrichmentValues.size());
+				for (int i = 0; i < enrichmentValues.size(); i++) {
 					Person person = (Person) keyContextsList.get(i);
-					String enrichedString = li.get(i);
+					String enrichedString = enrichmentValues.get(i);
 					person.setEnrichedString(enrichedString);
 					result.add(person);
 				}
@@ -109,8 +102,8 @@ public class Cases {
 		}
 	}
 
-	public static void queryingForList(EnrichmentService enrichmentService) {
-		var executionResult = getGraphQl(enrichmentService).execute(ExecutionInput.newExecutionInput()
+	public static ExecutionResult queryingForList(EnrichmentService enrichmentService) {
+		return  getGraphQl(enrichmentService).execute(ExecutionInput.newExecutionInput()
 			.query("query list {\n" +
 				"    list {\n" +
 				"        id\n" +
@@ -119,9 +112,6 @@ public class Cases {
 				"}")
 			.dataLoaderRegistry(dataLoaderRegistry)
 			.build());
-
-		// I don't really care about the result, all that matters is how many times the enrichmentService was called
-		// but you can have a look at executionResult.getData()
 	}
 
 	public static void subscribingToFlux(EnrichmentService enrichmentService) {
