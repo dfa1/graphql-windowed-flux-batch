@@ -6,8 +6,7 @@ import graphql.GraphQL;
 import graphql.schema.DataFetcher;
 import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
-import org.dataloader.BatchLoaderEnvironment;
-import org.dataloader.BatchLoaderWithContext;
+import org.dataloader.BatchLoader;
 import org.dataloader.DataLoader;
 import org.dataloader.DataLoaderOptions;
 import org.dataloader.DataLoaderRegistry;
@@ -38,7 +37,8 @@ public class Cases {
 			};
 
 		DataLoaderOptions dataLoaderOptions = DataLoaderOptions.newOptions().setBatchingEnabled(true).setMaxBatchSize(10);
-		DataLoader<Integer, String> integerPersonDataLoader = DataLoader.newDataLoader(new EnrichmentServiceBatched(enrichmentService), dataLoaderOptions);
+		DataLoader<Integer, String> integerPersonDataLoader = DataLoader.newDataLoader(
+			keys -> enrichmentService.getEnrichmentValuesInBulk(keys), dataLoaderOptions);
 
 		dataLoaderRegistry.register(ENRICHMENT_DATA_LOADER, integerPersonDataLoader);
 
@@ -55,20 +55,6 @@ public class Cases {
 		return GraphQL
 			.newGraphQL(graphQlSchema)
 			.build();
-	}
-
-	private static class EnrichmentServiceBatched implements BatchLoaderWithContext<Integer, String> {
-
-		private final EnrichmentService enrichmentService;
-
-		private EnrichmentServiceBatched(EnrichmentService enrichmentService) {
-			this.enrichmentService = enrichmentService;
-		}
-
-		@Override
-		public CompletionStage<List<String>> load(List<Integer> keys, BatchLoaderEnvironment environment) {
-			return enrichmentService.getEnrichmentValuesInBulk(keys);
-		}
 	}
 
 	public static ExecutionResult queryingForList(EnrichmentService enrichmentService) {
