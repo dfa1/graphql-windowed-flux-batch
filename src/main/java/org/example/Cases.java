@@ -6,14 +6,11 @@ import graphql.GraphQL;
 import graphql.schema.DataFetcher;
 import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
-import org.dataloader.BatchLoader;
 import org.dataloader.DataLoader;
 import org.dataloader.DataLoaderOptions;
 import org.dataloader.DataLoaderRegistry;
 import org.example.dto.Person;
 
-import java.util.List;
-import java.util.concurrent.CompletionStage;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -32,13 +29,12 @@ public class Cases {
 		DataFetcher<Stream<Person>> listDataFetcher =
 			dataFetchingEnvironment -> {
 				// replacing Source.getPersonList();
-				// avoiding allocating a big list upfront...
+				// avoiding allocating a big list upfront...ˇ
 				return IntStream.range(1, 100).boxed().map(Person::new);
 			};
 
 		DataLoaderOptions dataLoaderOptions = DataLoaderOptions.newOptions().setBatchingEnabled(true).setMaxBatchSize(10);
-		DataLoader<Integer, String> integerPersonDataLoader = DataLoader.newDataLoader(
-			keys -> enrichmentService.getEnrichmentValuesInBulk(keys), dataLoaderOptions);
+		DataLoader<Integer, String> integerPersonDataLoader = DataLoader.newDataLoader(enrichmentService::getEnrichmentValuesInBulk, dataLoaderOptions);
 
 		dataLoaderRegistry.register(ENRICHMENT_DATA_LOADER, integerPersonDataLoader);
 
