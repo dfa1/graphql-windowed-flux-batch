@@ -3,10 +3,7 @@ package org.example;
 import graphql.ExecutionInput;
 import graphql.ExecutionResult;
 import graphql.GraphQL;
-import graphql.execution.SubscriptionExecutionStrategy;
-import graphql.execution.ValueUnboxer;
 import graphql.schema.DataFetcher;
-import graphql.schema.DataFetchingEnvironment;
 import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
 import org.dataloader.BatchLoaderEnvironment;
@@ -17,7 +14,6 @@ import org.dataloader.DataLoaderRegistry;
 import org.example.dto.Person;
 
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -49,28 +45,15 @@ public class Cases {
 		var runtimeWiring = newRuntimeWiring()
 			.type("Query", builder ->
 				builder.dataFetcher("list", listDataFetcher))
-			.type("Person", builder -> builder.dataFetcher("enrichedString", new DataFetcher() {
-				@Override
-				public Object get(DataFetchingEnvironment environment) throws Exception {
-					System.out.println(environment.getField());
-					return null;
-				}
+			.type("Person", builder -> builder.dataFetcher("enrichedString", environment -> {
+				Person person = environment.getSource();
+				return environment.getDataLoader(ENRICHMENT_DATA_LOADER).load(person.getId());
 			}))
 			.build();
 
 		var graphQlSchema = new SchemaGenerator().makeExecutableSchema(typeDefinitionRegistry, runtimeWiring);
 		return GraphQL
 			.newGraphQL(graphQlSchema)
-			.valueUnboxer(new ValueUnboxer() {
-				@Override
-				public Object unbox(Object object) {
-					if (object instanceof CompletableFuture) {
-						return ((CompletableFuture<Object>) object).join();
-					}
-					return object;
-				}
-			})
-			.subscriptionExecutionStrategy(new SubscriptionExecutionStrategy())
 			.build();
 	}
 
